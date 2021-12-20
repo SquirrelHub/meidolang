@@ -7,6 +7,7 @@ extern crate inkwell;
 use std::borrow::Borrow;
 use std::io::{self, Write};
 use std::thread::current;
+use inkwell::AddressSpace;
 use inkwell::module::Linkage;
 use crate::Token::{MINUS, MULT, PLUS, PROGRAMEND};
 
@@ -218,6 +219,10 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let main_fn = self.module.add_function("main", main_fn_type, Some(Linkage::External));
         let basic_block = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(basic_block);
+
+        let i32_type = self.context.i32_type();
+        let i32_zero = i32_type.const_int(0, false);
+        self.builder.build_return(Some(&i32_zero));
     }
 
     fn write_to_file(&self) -> Result<(), String> {
@@ -236,6 +241,15 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 CodeModel::Default,
             )
             .ok_or_else(|| "Unable to create target machine!".to_string())?;
+
+        let buff = target_machine
+            .write_to_memory_buffer(&self.module, FileType::Assembly)
+            .expect("couldn't compile to assembly");
+
+        println!(
+            "Assembly:\n{}",
+            String::from_utf8(buff.as_slice().to_vec()).unwrap()
+        );
 
         target_machine
             .write_to_file(&self.module, FileType::Object, "a.o".as_ref())
@@ -265,7 +279,7 @@ fn main() {
     };
 
     codegen.build_main();
-    let some_val = codegen.compile_expr(&ast);
+    //let some_val = codegen.compile_expr(&ast);
     codegen.write_to_file();
     ()
 }
