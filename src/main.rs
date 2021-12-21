@@ -12,6 +12,8 @@ use std::io::{self, Write};
 use std::thread::current;
 use clap::{App, Arg};
 use inkwell::AddressSpace;
+use inkwell::AddressSpace::Global;
+use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Linkage;
 use crate::Token::{MINUS, MULT, PLUS, PROGRAMEND};
 
@@ -139,6 +141,7 @@ impl<'a> Parser<'a> {
                     Err("String was not ended properly.")
                 }
                 else {
+                    self.current = self.lex.next();
                     Ok(Expr::StringPrint(Box::new(the_string)))
                 }
             }
@@ -204,6 +207,7 @@ pub struct Compiler<'a, 'ctx> {
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
     variables: Vec<IntValue<'ctx>>,
+    execution_engine: &'a ExecutionEngine<'ctx>,
     printf_defined: bool
 }
 
@@ -227,24 +231,24 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     _ => Err("Invalid operator. Check parser did not parse incorrectly.")
                 }
             }
-            /*Expr::StringPrint(str) => {
+            Expr::StringPrint(str) => {
                 if !self.printf_defined {
                     self.define_printf();
                     self.printf_defined = true
                 }
                 let the_string = self.builder.build_global_string_ptr(str.as_str(), "string");
-                let mut arguments: Vec<GlobalValue> = vec![];
-                arguments.push(the_string);
-                //self.builder.build_call(self.module.get_function("printf"), &[the_string.into()], "printf");
+                let mut arguments: Vec<BasicMetadataValueEnum> = vec![];
+                arguments.push(the_string.as_pointer_value().into());
+                self.builder.build_call(self.module.get_function("printf").unwrap(), &arguments, "printf");
                 Ok(self.context.i32_type().const_int(0, false))
-            }*/
+            }
             _ => Err("Code Generation Failed. Can't generate at this time, or invalid program was being built.")
         }
     }
 
     fn define_printf(&self) {
-        //let printf_fn_type = self.context.i32_type().fn_type(&[], true);
-        //let printf_fn = self.module.add_function("printf", printf_fn_type, Some(Linkage::External)).set_call_conventions(0); // https://llvm.org/doxygen/namespacellvm_1_1CallingConv.html
+        let printf_fn_type = self.context.i32_type().fn_type(&[self.context.ptr_sized_int_type(self.execution_engine.get_target_data(), Option::from(Global)).into()], true);
+        self.module.add_function("printf", printf_fn_type, Some(Linkage::External)).set_call_conventions(0); // https://llvm.org/doxygen/namespacellvm_1_1CallingConv.html
     }
 
     fn build_main(&self) {
@@ -273,7 +277,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 &cpu,
                 &features,
                 OptimizationLevel::Default,
-                RelocMode::Default,
+                RelocMode::DynamicNoPic,
                 CodeModel::Default,
             )
             .ok_or_else(|| "Unable to create target machine!".to_string())?;
@@ -306,7 +310,7 @@ fn main() {
     let jit_enabled = matches.is_present("jit");
     //let mut lex = Token::lexer("レムレムラムベティレムレムラムベティ+ベティスバルtest君さよなら.");
 
-    let lex = Token::lexer("レムレムラムレムレムラム+レムラム-");
+    let lex = Token::lexer("レムレムラムレムレムラム+レムラム-スバルtest君");
 
     let mut parser: Parser = Parser::new(lex);
     let mut ast = Expr::PrintStack;
@@ -318,21 +322,21 @@ fn main() {
     let context = Context::create();
     let module = context.create_module("MeidoLang");
     let mut builder = context.create_builder();
+    let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
     let mut codegen = Compiler {
         context: &context,
         builder: builder.borrow(),
         module: module.borrow(),
         variables: vec![],
+        execution_engine: execution_engine.borrow(),
         printf_defined: false
     };
 
     codegen.build_main();
     let body = codegen.compile_expr(&ast);
-    builder.build_return(Some(&body.unwrap()));
     codegen.build_end_return();
 
     if jit_enabled {
-        let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
         let maybe_fn = unsafe { execution_engine.get_function::<unsafe extern "C" fn() -> i32>("main") };
         let compiled_fn = match maybe_fn {
             Ok(f) => f,
