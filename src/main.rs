@@ -1,5 +1,8 @@
 #![allow(unused_variables)]
+#![allow(unused_imports)]
+#![allow(dead_code)]
 
+use std::any::Any;
 use logos::Logos;
 
 extern crate inkwell;
@@ -7,6 +10,7 @@ extern crate inkwell;
 use std::borrow::Borrow;
 use std::io::{self, Write};
 use std::thread::current;
+use clap::{App, Arg};
 use inkwell::AddressSpace;
 use inkwell::module::Linkage;
 use crate::Token::{MINUS, MULT, PLUS, PROGRAMEND};
@@ -21,7 +25,7 @@ use self::inkwell::{OptimizationLevel, FloatPredicate};
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::values::FunctionValue;
+use inkwell::values::{AnyValue, CallableValue, FunctionValue, GlobalValue};
 
 
 #[derive(Logos, Debug, PartialEq)]
@@ -81,7 +85,7 @@ pub enum Expr {
 
     PrintStack,
 
-    StringPrint
+    StringPrint(Box<String>)
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
@@ -122,6 +126,22 @@ impl<'a> Parser<'a> {
             let value = Box::new(Expr::Number(Box::new(val)));
             self.stack.push(value);
             return Ok(Expr::Number(Box::new(val)));
+        }
+        else if self.current == Some(Token::STRINGSTART){
+            self.current = self.lex.next();
+            if self.current != Some(Token::STRINGLITERAL) {
+                Err("No String found.")
+            }
+            else {
+                let the_string = self.lex.slice().to_string();
+                self.current = self.lex.next();
+                if self.current != Some(Token::STRINGEND){
+                    Err("String was not ended properly.")
+                }
+                else {
+                    Ok(Expr::StringPrint(Box::new(the_string)))
+                }
+            }
         }
         else{
             Err("Unknown At this time.")
@@ -184,13 +204,10 @@ pub struct Compiler<'a, 'ctx> {
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
     variables: Vec<IntValue<'ctx>>,
+    printf_defined: bool
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
-
-    pub fn init_targets() {
-        Target::initialize_all(&InitializationConfig::default())
-    }
 
     fn compile_expr(&mut self, expr: &Expr) -> Result<IntValue<'ctx>, &'static str> {
         match &expr {
@@ -204,14 +221,30 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                     '+' => {
                         Ok(self.builder.build_int_add(lhs, rhs, "anAdd"))
                     },
-                    '-' => Ok(self.builder.build_int_sub(lhs, rhs, "anSub")),
-                    '*' => Ok(self.builder.build_int_mul(lhs, rhs, "anMult")),
-                    '/' => Ok(self.builder.build_int_signed_div(lhs, rhs, "anDiv")),
+                    '-' => Ok(self.builder.build_int_sub(lhs, rhs, "aSub")),
+                    '*' => Ok(self.builder.build_int_mul(lhs, rhs, "aMult")),
+                    '/' => Ok(self.builder.build_int_signed_div(lhs, rhs, "aDiv")),
                     _ => Err("Invalid operator. Check parser did not parse incorrectly.")
                 }
             }
+            /*Expr::StringPrint(str) => {
+                if !self.printf_defined {
+                    self.define_printf();
+                    self.printf_defined = true
+                }
+                let the_string = self.builder.build_global_string_ptr(str.as_str(), "string");
+                let mut arguments: Vec<GlobalValue> = vec![];
+                arguments.push(the_string);
+                //self.builder.build_call(self.module.get_function("printf"), &[the_string.into()], "printf");
+                Ok(self.context.i32_type().const_int(0, false))
+            }*/
             _ => Err("Code Generation Failed. Can't generate at this time, or invalid program was being built.")
         }
+    }
+
+    fn define_printf(&self) {
+        //let printf_fn_type = self.context.i32_type().fn_type(&[], true);
+        //let printf_fn = self.module.add_function("printf", printf_fn_type, Some(Linkage::External)).set_call_conventions(0); // https://llvm.org/doxygen/namespacellvm_1_1CallingConv.html
     }
 
     fn build_main(&self) {
@@ -219,13 +252,16 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
         let main_fn = self.module.add_function("main", main_fn_type, Some(Linkage::External));
         let basic_block = self.context.append_basic_block(main_fn, "entry");
         self.builder.position_at_end(basic_block);
+    }
 
+    fn build_end_return(&self) {
         let i32_type = self.context.i32_type();
         let i32_zero = i32_type.const_int(0, false);
         self.builder.build_return(Some(&i32_zero));
     }
 
     fn write_to_file(&self) -> Result<(), String> {
+        Target::initialize_all(&InitializationConfig::default());
         let target_triple = TargetMachine::get_default_triple();
         let cpu = TargetMachine::get_host_cpu_name().to_string();
         let features = TargetMachine::get_host_cpu_features().to_string();
@@ -258,10 +294,22 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
 }
 
 fn main() {
+
+    let matches = App::new("MeidoLang")
+        .version("0.1.0")
+        .arg(Arg::with_name("jit")
+            .short("j")
+            .long("jit")
+            .help("Specifies to run with just in time compilation.")
+            .required(false))
+        .get_matches();
+    let jit_enabled = matches.is_present("jit");
     //let mut lex = Token::lexer("レムレムラムベティレムレムラムベティ+ベティスバルtest君さよなら.");
+
     let lex = Token::lexer("レムレムラムレムレムラム+レムラム-");
+
     let mut parser: Parser = Parser::new(lex);
-    let mut ast = Expr::StringPrint;
+    let mut ast = Expr::PrintStack;
     while let Ok(i) = parser.parse_expr() {
         ast = i;
     }
@@ -270,18 +318,37 @@ fn main() {
     let context = Context::create();
     let module = context.create_module("MeidoLang");
     let mut builder = context.create_builder();
-    let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None);
     let mut codegen = Compiler {
         context: &context,
         builder: builder.borrow(),
         module: module.borrow(),
-        variables: vec![]
+        variables: vec![],
+        printf_defined: false
     };
 
     codegen.build_main();
-    //let some_val = codegen.compile_expr(&ast);
-    codegen.write_to_file();
-    ()
+    let body = codegen.compile_expr(&ast);
+    builder.build_return(Some(&body.unwrap()));
+    codegen.build_end_return();
+
+    if jit_enabled {
+        let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
+        let maybe_fn = unsafe { execution_engine.get_function::<unsafe extern "C" fn() -> i32>("main") };
+        let compiled_fn = match maybe_fn {
+            Ok(f) => f,
+            Err(err) => {
+                println!("!> Error during execution: {:?}", err);
+                return ()
+            }
+        };
+        unsafe {
+            println!("=> {}", compiled_fn.call());
+        }
+    }
+    else {
+        codegen.write_to_file();
+    }
+
 }
 
 #[cfg(test)]
