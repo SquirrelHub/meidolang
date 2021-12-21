@@ -83,6 +83,11 @@ pub enum Expr {
         right: Box<Expr>
     },
 
+    Call {
+        other: Box<Expr>,
+        actual: Box<Expr>
+    },
+
     Number(Box<Val>),
 
     PrintStack,
@@ -142,7 +147,17 @@ impl<'a> Parser<'a> {
                 }
                 else {
                     self.current = self.lex.next();
-                    Ok(Expr::StringPrint(Box::new(the_string)))
+                    if self.stack.len() > 0 {
+                        let call = Expr::Call {
+                            other: self.stack.pop().unwrap(),
+                            actual: Box::new(Expr::StringPrint(Box::new(the_string)))
+                        };
+                        self.stack.push(Box::from(call.clone()));
+                        Ok(call)
+                    }
+                    else {
+                        Ok(Expr::StringPrint(Box::new(the_string)))
+                    }
                 }
             }
         }
@@ -216,20 +231,43 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
     fn compile_expr(&mut self, expr: &Expr) -> Result<IntValue<'ctx>, &'static str> {
         match &expr {
             Expr::Number(nb) => {
-                Ok(self.context.i32_type().const_int(nb.n as u64, true))
+                let return_val = self.context.i32_type().const_int(nb.n as u64, true);
+                self.variables.push(return_val.clone());
+                Ok(return_val)
             },
             Expr::Binary {op, ref left, ref right} => {
                 let lhs = self.compile_expr(left)?;
                 let rhs = self.compile_expr(right)?;
+                self.variables.pop();
+                self.variables.pop();
                 match op {
                     '+' => {
-                        Ok(self.builder.build_int_add(lhs, rhs, "anAdd"))
+                        let return_val = self.builder.build_int_add(lhs, rhs, "anAdd");
+                        self.variables.push(return_val.clone());
+                        Ok(return_val)
                     },
-                    '-' => Ok(self.builder.build_int_sub(lhs, rhs, "aSub")),
-                    '*' => Ok(self.builder.build_int_mul(lhs, rhs, "aMult")),
-                    '/' => Ok(self.builder.build_int_signed_div(lhs, rhs, "aDiv")),
+                    '-' => {
+                        let return_val = self.builder.build_int_sub(lhs, rhs, "aSub");
+                        self.variables.push(return_val.clone());
+                        Ok(return_val)
+                    },
+                    '*' => {
+                        let return_val = self.builder.build_int_mul(lhs, rhs, "aMult");
+                        self.variables.push(return_val.clone());
+                        Ok(return_val)
+                    },
+                    '/' => {
+                        let return_val = self.builder.build_int_signed_div(lhs, rhs, "aDiv");
+                        self.variables.push(return_val.clone());
+                        Ok(return_val)
+                    },
                     _ => Err("Invalid operator. Check parser did not parse incorrectly.")
                 }
+            }
+            Expr::Call {ref other, ref actual} => {
+                let some_expr = self.compile_expr(other);
+                let the_expr = self.compile_expr(actual);
+                Ok(self.context.i32_type().const_int(0, false))
             }
             Expr::StringPrint(str) => {
                 if !self.printf_defined {
