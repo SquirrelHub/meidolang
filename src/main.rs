@@ -9,7 +9,7 @@ extern crate inkwell;
 
 use std::borrow::Borrow;
 use std::fmt::format;
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::thread::current;
 use clap::{App, Arg};
 use inkwell::AddressSpace;
@@ -29,6 +29,7 @@ use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
 use inkwell::values::{AnyValue, CallableValue, FunctionValue, GlobalValue};
+use crate::Expr::StringPrint;
 
 
 #[derive(Logos, Debug, PartialEq)]
@@ -93,6 +94,8 @@ pub enum Expr {
 
     PrintStack,
 
+    ProgramEnd,
+
     StringPrint(Box<String>)
 }
 
@@ -141,7 +144,7 @@ impl<'a> Parser<'a> {
                 Err("No String found.")
             }
             else {
-                let the_string = self.lex.slice().to_string();
+                let the_string = self.lex.slice().to_string() + &*" ";
                 self.current = self.lex.next();
                 if self.current != Some(Token::STRINGEND){
                     Err("String was not ended properly.")
@@ -157,6 +160,7 @@ impl<'a> Parser<'a> {
                         Ok(call)
                     }
                     else {
+                        self.stack.push(Box::new(StringPrint(Box::new(the_string.clone()))));
                         Ok(Expr::StringPrint(Box::new(the_string)))
                     }
                 }
@@ -173,8 +177,16 @@ impl<'a> Parser<'a> {
                 Ok(call)
             }
             else {
+                self.stack.push(Box::new(Expr::PrintStack));
                 Ok(Expr::PrintStack)
             }
+        }
+        else if self.current == Some(Token::PROGRAMEND) {
+            //Ignore everything else. Program should terminate.
+            self.lex = Logos::lexer("");
+            self.current = self.lex.next();
+            self.stack.push(Box::new(Expr::ProgramEnd));
+            Ok(Expr::ProgramEnd)
         }
         else{
             Err("Unknown At this time.")
@@ -320,6 +332,9 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 self.builder.build_call(self.module.get_function("printf").unwrap(), &arguments, "printf");
                 Ok(self.context.i32_type().const_int(0, false))
             }
+            Expr::ProgramEnd => {
+                Ok(self.context.i32_type().const_int(0, false))
+            }
             _ => Err("Code Generation Failed. Can't generate at this time, or invalid program was being built.")
         }
     }
@@ -384,18 +399,27 @@ fn main() {
             .long("jit")
             .help("Specifies to run with just in time compilation.")
             .required(false))
+        .arg(Arg::with_name("input")
+            .short("i")
+            .long("input")
+            .required(true)
+            .value_name("FILE")
+            .help("Input file for reading code."))
         .get_matches();
     let jit_enabled = matches.is_present("jit");
+    let path = matches.value_of("input").expect("No input file specified. See --help");
+    let mut file = std::fs::File::open(path).unwrap();
+    let mut code = String::new();
+    file.read_to_string(&mut code).unwrap();
     //let mut lex = Token::lexer("レムレムラムベティレムレムラムベティ+ベティスバルtest君さよなら.");
 
-    let lex = Token::lexer("スバルtest君レムレムラムレムレムラム+レムラム-スバルtest君ベティ");
+    let lex = Token::lexer(&code);
 
-    let mut parser: Parser = Parser::new(lex);
+    let mut parser: Parser = Parser::new( lex);
     let mut ast = Expr::PrintStack;
     while let Ok(i) = parser.parse_expr() {
         ast = i;
     }
-
 
     let context = Context::create();
     let module = context.create_module("MeidoLang");
@@ -413,7 +437,10 @@ fn main() {
     };
 
     codegen.build_main();
-    let body = codegen.compile_expr(&ast);
+    parser.stack.reverse();
+    while let Some(an_expr) = parser.stack.pop() {
+        codegen.compile_expr(&an_expr);
+    }
     codegen.build_end_return();
 
     if jit_enabled {
