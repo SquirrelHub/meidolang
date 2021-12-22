@@ -1,36 +1,23 @@
-#![allow(unused_variables)]
-#![allow(unused_imports)]
-#![allow(dead_code)]
-
-use std::any::Any;
 use logos::Logos;
 
 extern crate inkwell;
 
 use std::borrow::Borrow;
-use std::fmt::format;
-use std::io::{self, Read, Write};
-use std::thread::current;
+use std::io::{Read};
 use clap::{App, Arg};
-use inkwell::AddressSpace;
 use inkwell::AddressSpace::Global;
 use inkwell::execution_engine::ExecutionEngine;
 use inkwell::module::Linkage;
-use crate::Token::{MINUS, MULT, PLUS, PROGRAMEND};
+use crate::Token::{MINUS, MULT, PLUS};
 
 use self::inkwell::builder::Builder;
 use self::inkwell::context::Context;
 use self::inkwell::module::Module;
-use self::inkwell::passes::PassManager;
-use self::inkwell::types::BasicMetadataTypeEnum;
-use self::inkwell::values::{BasicValue, BasicMetadataValueEnum, IntValue};
-use self::inkwell::{OptimizationLevel, FloatPredicate};
+use self::inkwell::values::{BasicMetadataValueEnum, IntValue};
+use self::inkwell::{OptimizationLevel};
 use inkwell::targets::{
     CodeModel, FileType, InitializationConfig, RelocMode, Target, TargetMachine,
 };
-use inkwell::values::{AnyValue, CallableValue, FunctionValue, GlobalValue};
-use crate::Expr::StringPrint;
-
 
 #[derive(Logos, Debug, PartialEq)]
 enum Token {
@@ -107,7 +94,8 @@ pub struct Val {
 pub struct Parser<'a> {
     lex: logos::Lexer<'a, Token>,
     current: Option<Token>,
-    stack: Vec<Box<Expr>>
+    stack: Vec<Box<Expr>>,
+    variables: Vec<Box<Expr>>
 }
 
 impl<'a> Parser<'a> {
@@ -117,7 +105,8 @@ impl<'a> Parser<'a> {
         Parser{
             lex: l,
             current: cur,
-            stack: Vec::new()
+            stack: Vec::new(),
+            variables: Vec::new()
         }
     }
 
@@ -128,13 +117,15 @@ impl<'a> Parser<'a> {
             self.current == Some(Token::DIV) {
             let val = self.parse_binary_expr();
             let return_val = val.clone();
-            let value = Box::from(Box::from(val.expect("Value was not present.")));
+            let value = Box::from(Box::from(val.clone().expect("Value was not present.")));
             self.stack.push(*value);
+            self.variables.push(Box::new(val.unwrap()).clone());
             return return_val;
         }
         else if self.current == Some(Token::ONE) {
             let val = self.parse_nb_expr().unwrap();
             let value = Box::new(Expr::Number(Box::new(val)));
+            self.variables.push(value.clone());
             self.stack.push(value);
             return Ok(Expr::Number(Box::new(val)));
         }
@@ -160,7 +151,7 @@ impl<'a> Parser<'a> {
                         Ok(call)
                     }
                     else {
-                        self.stack.push(Box::new(StringPrint(Box::new(the_string.clone()))));
+                        self.stack.push(Box::new(Expr::StringPrint(Box::new(the_string.clone()))));
                         Ok(Expr::StringPrint(Box::new(the_string)))
                     }
                 }
@@ -194,11 +185,13 @@ impl<'a> Parser<'a> {
     }
 
     fn parse_binary_expr(&mut self) -> Result<Expr, &'static str> {
-        if (self.stack.len() < 2){
-            return(Err("Not enough variables to perform an operation"))
+        if self.variables.len() < 2 {
+            return Err("Not enough variables to perform an operation")
         }
         let right = self.stack.pop().expect("Strange Value Exists in the stack.");
         let left = self.stack.pop().expect("Strange Value Exists in the stack.");
+        self.variables.pop();
+        self.variables.pop();
         let op: char;
         if self.current == Some(Token::PLUS) {
             op = '+';
@@ -295,7 +288,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             }
             Expr::Call {ref other, ref actual} => {
                 let some_expr = self.compile_expr(other);
-                let the_expr = self.compile_expr(actual);
+                let _ = self.compile_expr(actual);
                 Ok(some_expr.unwrap())
             }
             Expr::StringPrint(str) => {
@@ -319,7 +312,7 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
                 let mut arguments : Vec<BasicMetadataValueEnum> = vec![];
                 let mut format_string : String = "".to_string();
                 let name_of_string = "print_stack".to_string() + &self.print_stack_count.to_string();
-                for var in self.variables.clone() {
+                for _ in self.variables.clone() {
                     format_string = format_string + "%d ";
                 }
                 let the_string = self.builder.build_global_string_ptr(format_string.as_str(), name_of_string.as_str());
@@ -335,7 +328,6 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Expr::ProgramEnd => {
                 Ok(self.context.i32_type().const_int(0, false))
             }
-            _ => Err("Code Generation Failed. Can't generate at this time, or invalid program was being built.")
         }
     }
 
@@ -416,14 +408,11 @@ fn main() {
     let lex = Token::lexer(&code);
 
     let mut parser: Parser = Parser::new( lex);
-    let mut ast = Expr::PrintStack;
-    while let Ok(i) = parser.parse_expr() {
-        ast = i;
-    }
+    while let Ok(_) = parser.parse_expr() {/*Call the function until it can no longer be called.*/}
 
     let context = Context::create();
     let module = context.create_module("MeidoLang");
-    let mut builder = context.create_builder();
+    let builder = context.create_builder();
     let execution_engine = module.create_jit_execution_engine(OptimizationLevel::None).unwrap();
     let mut codegen = Compiler {
         context: &context,
@@ -439,7 +428,7 @@ fn main() {
     codegen.build_main();
     parser.stack.reverse();
     while let Some(an_expr) = parser.stack.pop() {
-        codegen.compile_expr(&an_expr);
+        codegen.compile_expr(&an_expr).expect("Unable to compile a statement.");
     }
     codegen.build_end_return();
 
@@ -457,7 +446,7 @@ fn main() {
         }
     }
     else {
-        codegen.write_to_file();
+        codegen.write_to_file().expect("Could not write to file.");
     }
 
 }
