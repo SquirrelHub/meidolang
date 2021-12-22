@@ -8,6 +8,7 @@ use logos::Logos;
 extern crate inkwell;
 
 use std::borrow::Borrow;
+use std::fmt::format;
 use std::io::{self, Write};
 use std::thread::current;
 use clap::{App, Arg};
@@ -161,6 +162,20 @@ impl<'a> Parser<'a> {
                 }
             }
         }
+        else if self.current == Some(Token::PRINTSTACK) {
+            self.current = self.lex.next();
+            if self.stack.len() > 0 {
+                let call = Expr::Call {
+                    other: self.stack.pop().unwrap(),
+                    actual: Box::new(Expr::PrintStack)
+                };
+                self.stack.push(Box::from(call.clone()));
+                Ok(call)
+            }
+            else {
+                Ok(Expr::PrintStack)
+            }
+        }
         else{
             Err("Unknown At this time.")
         }
@@ -221,9 +236,11 @@ pub struct Compiler<'a, 'ctx> {
     pub context: &'ctx Context,
     pub builder: &'a Builder<'ctx>,
     pub module: &'a Module<'ctx>,
-    variables: Vec<IntValue<'ctx>>,
-    execution_engine: &'a ExecutionEngine<'ctx>,
-    printf_defined: bool
+    pub variables: Vec<IntValue<'ctx>>,
+    pub execution_engine: &'a ExecutionEngine<'ctx>,
+    pub printf_defined: bool,
+    pub string_count: u16,
+    pub print_stack_count: u16
 }
 
 impl<'a, 'ctx> Compiler<'a, 'ctx> {
@@ -267,16 +284,39 @@ impl<'a, 'ctx> Compiler<'a, 'ctx> {
             Expr::Call {ref other, ref actual} => {
                 let some_expr = self.compile_expr(other);
                 let the_expr = self.compile_expr(actual);
-                Ok(self.context.i32_type().const_int(0, false))
+                Ok(some_expr.unwrap())
             }
             Expr::StringPrint(str) => {
                 if !self.printf_defined {
                     self.define_printf();
                     self.printf_defined = true
                 }
-                let the_string = self.builder.build_global_string_ptr(str.as_str(), "string");
+                let name_of_string = "string".to_string() + &self.string_count.to_string();
+                let the_string = self.builder.build_global_string_ptr(str.as_str(), name_of_string.as_str());
+                self.string_count += 1;
                 let mut arguments: Vec<BasicMetadataValueEnum> = vec![];
                 arguments.push(the_string.as_pointer_value().into());
+                self.builder.build_call(self.module.get_function("printf").unwrap(), &arguments, "printf");
+                Ok(self.context.i32_type().const_int(0, false))
+            }
+            Expr::PrintStack => {
+                if !self.printf_defined {
+                    self.define_printf();
+                    self.printf_defined = true
+                }
+                let mut arguments : Vec<BasicMetadataValueEnum> = vec![];
+                let mut format_string : String = "".to_string();
+                let name_of_string = "print_stack".to_string() + &self.print_stack_count.to_string();
+                for var in self.variables.clone() {
+                    format_string = format_string + "%d ";
+                }
+                let the_string = self.builder.build_global_string_ptr(format_string.as_str(), name_of_string.as_str());
+                self.print_stack_count += 1;
+                arguments.push(the_string.as_pointer_value().into());
+                for var in self.variables.clone() {
+                    arguments.push(var.into());
+                }
+
                 self.builder.build_call(self.module.get_function("printf").unwrap(), &arguments, "printf");
                 Ok(self.context.i32_type().const_int(0, false))
             }
@@ -348,7 +388,7 @@ fn main() {
     let jit_enabled = matches.is_present("jit");
     //let mut lex = Token::lexer("レムレムラムベティレムレムラムベティ+ベティスバルtest君さよなら.");
 
-    let lex = Token::lexer("レムレムラムレムレムラム+レムラム-スバルtest君");
+    let lex = Token::lexer("スバルtest君レムレムラムレムレムラム+レムラム-スバルtest君ベティ");
 
     let mut parser: Parser = Parser::new(lex);
     let mut ast = Expr::PrintStack;
@@ -367,7 +407,9 @@ fn main() {
         module: module.borrow(),
         variables: vec![],
         execution_engine: execution_engine.borrow(),
-        printf_defined: false
+        printf_defined: false,
+        string_count: 1,
+        print_stack_count: 1
     };
 
     codegen.build_main();
