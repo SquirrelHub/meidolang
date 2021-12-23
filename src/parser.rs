@@ -108,7 +108,6 @@ impl<'a> Parser<'a> {
         })
     }
 
-    /// Parses a literal number.
     fn parse_nb_expr(&mut self) -> Result<Val, &'static str> {
         if self.current == Some(Token::ONE) {
             self.current = self.lex.next();
@@ -238,7 +237,7 @@ mod tests {
 
     #[test]
     fn parse_binary_expr_parses_multiple_operations() {
-        let lex = Tokens::lexer("レムレムラムレムレムラム+レムラム-");
+        let lex = Token::lexer("レムレムラムレムレムラム+レムラム-");
         let mut parse: Parser = Parser::new(lex);
         parse.parse_expr();
         parse.parse_expr();

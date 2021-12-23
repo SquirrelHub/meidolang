@@ -38,7 +38,6 @@ fn main() {
     let mut file = std::fs::File::open(path).unwrap();
     let mut code = String::new();
     file.read_to_string(&mut code).unwrap();
-    //let mut lex = Token::lexer("レムレムラムベティレムレムラムベティ+ベティスバルtest君さよなら.");
 
     let lex = Token::lexer(&code);
 
