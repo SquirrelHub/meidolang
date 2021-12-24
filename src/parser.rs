@@ -257,4 +257,43 @@ mod tests {
             right: Box::new(Expr::Number(Box::new(Val { n: 1 })))
         });
     }
+
+    #[test]
+    fn parse_printstack_expr_parses_expression() {
+        let lex = Token::lexer("ベティ");
+        let mut parse: Parser = Parser::new(lex);
+        assert_eq!(parse.parse_expr().unwrap(), Expr::PrintStack);
+    }
+
+    #[test]
+    fn parse_stringprint_expr_parses_expression() {
+        let lex = Token::lexer("スバルtest君");
+        let mut parse: Parser = Parser::new(lex);
+        assert_eq!(parse.parse_expr().unwrap(), Expr::StringPrint(Box::new("test ".to_string())));
+    }
+
+    #[test]
+    fn parse_programend_expr_parses_expression() {
+        let lex = Token::lexer("さよなら");
+        let mut parse: Parser = Parser::new(lex);
+        assert_eq!(parse.parse_expr().unwrap(), Expr::ProgramEnd);
+    }
+
+    #[test]
+    fn parse_printstack_with_binary_operation_maintains_all_expressions() {
+        let lex = Token::lexer("レムレムラムレムレムラム/ベティ");
+        let mut parse: Parser = Parser::new(lex);
+        parse.parse_expr();
+        parse.parse_expr();
+        parse.parse_expr();
+        assert_eq!(parse.parse_expr().unwrap(), Expr::Call {
+            other:  Box::new(Expr::Binary {
+                op: '/',
+                left: Box::new(Expr::Number(Box::new(Val { n: 2 }))),
+                right: Box::new(Expr::Number(Box::new(Val { n: 2 })))
+            }),
+            actual: Box::new(Expr::PrintStack)
+        })
+    }
+
 }

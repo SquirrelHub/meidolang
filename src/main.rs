@@ -97,12 +97,56 @@ mod tests {
             assert_eq!(lex.span(), 0..6);
             assert_eq!(lex.slice(), "レム");
 
-            assert_eq!(lex.next(), Some(Token::ONE));
+        assert_eq!(lex.next(), Some(Token::ONE));
             assert_eq!(lex.span(), 6..12);
             assert_eq!(lex.slice(), "レム");
 
-            assert_eq!(lex.next(), Some(Token::FINALIZER));
+        assert_eq!(lex.next(), Some(Token::FINALIZER));
             assert_eq!(lex.span(), 12..18);
             assert_eq!(lex.slice(), "ラム");
+
+        assert_eq!(lex.next(), Some(Token::PRINTSTACK));
+            assert_eq!(lex.span(), 18..27);
+            assert_eq!(lex.slice(), "ベティ");
+
+        assert_eq!(lex.next(), Some(Token::ONE));
+            assert_eq!(lex.span(), 27..33);
+            assert_eq!(lex.slice(), "レム");
+
+        assert_eq!(lex.next(), Some(Token::ONE));
+            assert_eq!(lex.span(), 33..39);
+            assert_eq!(lex.slice(), "レム");
+
+        assert_eq!(lex.next(), Some(Token::FINALIZER));
+            assert_eq!(lex.span(), 39..45);
+            assert_eq!(lex.slice(), "ラム");
+
+        assert_eq!(lex.next(), Some(Token::PRINTSTACK));
+            assert_eq!(lex.span(), 45..54);
+            assert_eq!(lex.slice(), "ベティ");
+
+        assert_eq!(lex.next(), Some(Token::PLUS));
+            assert_eq!(lex.span(), 54..55);
+            assert_eq!(lex.slice(), "+");
+
+        assert_eq!(lex.next(), Some(Token::PRINTSTACK));
+            assert_eq!(lex.span(), 55..64);
+            assert_eq!(lex.slice(), "ベティ");
+
+        assert_eq!(lex.next(), Some(Token::STRINGSTART));
+            assert_eq!(lex.span(), 64..73);
+            assert_eq!(lex.slice(), "スバル");
+
+        assert_eq!(lex.next(), Some(Token::STRINGLITERAL));
+            assert_eq!(lex.span(), 73..77);
+            assert_eq!(lex.slice(), "test");
+
+        assert_eq!(lex.next(), Some(Token::STRINGEND));
+            assert_eq!(lex.span(), 77..80);
+            assert_eq!(lex.slice(), "君");
+
+        assert_eq!(lex.next(), Some(Token::PROGRAMEND));
+            assert_eq!(lex.span(), 80..92);
+            assert_eq!(lex.slice(), "さよなら");
     }
 }
